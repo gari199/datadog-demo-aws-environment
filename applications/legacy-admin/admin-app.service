@@ -1,0 +1,20 @@
+[Unit]
+Description=Legacy Admin App
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/legacy-admin
+Environment="DB_HOST=datadog-demo-postgres.c7ckk2qsyz0a.eu-central-1.rds.amazonaws.com"
+Environment="DB_PORT=5432"
+Environment="DB_NAME=ecommerce"
+Environment="DB_USER=dbadmin"
+Environment="DB_PASSWORD=password"
+Environment="PORT=5002"
+ExecStart=/usr/bin/python3 app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

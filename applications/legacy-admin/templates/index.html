@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Legacy Admin Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+        }
+
+        .header {
+            background-color: #34495e;
+            color: white;
+            padding: 1.5rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 1.8rem;
+        }
+
+        .header p {
+            margin-top: 0.5rem;
+            opacity: 0.8;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-card h3 {
+            color: #7f8c8d;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .orders-section {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .orders-section h2 {
+            margin-bottom: 1.5rem;
+            color: #2c3e50;
+        }
+
+        .refresh-btn {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .refresh-btn:hover {
+            background-color: #2980b9;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 1rem;
+            border-bottom: 1px solid #ecf0f1;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .status {
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .status.pending {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+
+        .status.completed {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .status.failed {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #7f8c8d;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 3rem;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Legacy Admin Dashboard</h1>
+        <p>Traditional VM-based Administration Panel</p>
+    </div>
+
+    <div class="container">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Orders</h3>
+                <div class="value" id="total-orders">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Total Revenue</h3>
+                <div class="value" id="total-revenue">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <h3>Recent Orders (24h)</h3>
+                <div class="value" id="recent-orders">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Pending Orders</h3>
+                <div class="value" id="pending-orders">-</div>
+            </div>
+        </div>
+
+        <div class="orders-section">
+            <h2>All Orders</h2>
+            <button class="refresh-btn" onclick="loadData()">Refresh Data</button>
+            <div id="error-message"></div>
+            <div id="orders-table"></div>
+        </div>
+    </div>
+
+    <script>
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+
+                document.getElementById('total-orders').textContent = data.total_orders;
+                document.getElementById('total-revenue').textContent = '$' + data.total_revenue.toFixed(2);
+                document.getElementById('recent-orders').textContent = data.recent_orders_24h;
+                document.getElementById('pending-orders').textContent = data.orders_by_status.pending || 0;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function loadOrders() {
+            const tableDiv = document.getElementById('orders-table');
+            const errorDiv = document.getElementById('error-message');
+
+            tableDiv.innerHTML = '<div class="loading">Loading orders...</div>';
+            errorDiv.innerHTML = '';
+
+            try {
+                const response = await fetch('/api/orders');
+                const data = await response.json();
+
+                if (data.error) {
+                    errorDiv.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                    tableDiv.innerHTML = '';
+                    return;
+                }
+
+                if (data.orders.length === 0) {
+                    tableDiv.innerHTML = '<div class="empty">No orders found</div>';
+                    return;
+                }
+
+                let html = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Order ID</th>
+                                <th>User ID</th>
+                                <th>Product</th>
+                                <th>Quantity</th>
+                                <th>Price</th>
+                                <th>Total</th>
+                                <th>Status</th>
+                                <th>Created At</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                data.orders.forEach(order => {
+                    const createdAt = new Date(order.created_at).toLocaleString();
+                    html += `
+                        <tr>
+                            <td>#${order.id}</td>
+                            <td>${order.user_id}</td>
+                            <td>${order.product_name}</td>
+                            <td>${order.quantity}</td>
+                            <td>$${order.price.toFixed(2)}</td>
+                            <td>$${order.total.toFixed(2)}</td>
+                            <td><span class="status ${order.status}">${order.status}</span></td>
+                            <td>${createdAt}</td>
+                        </tr>
+                    `;
+                });
+
+                html += '</tbody></table>';
+                tableDiv.innerHTML = html;
+
+            } catch (error) {
+                console.error('Error loading orders:', error);
+                errorDiv.innerHTML = '<div class="error">Failed to load orders. Please try again.</div>';
+                tableDiv.innerHTML = '';
+            }
+        }
+
+        function loadData() {
+            loadStats();
+            loadOrders();
+        }
+
+        // Load data on page load
+        loadData();
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadData, 30000);
+    </script>
+</body>
+</html>
