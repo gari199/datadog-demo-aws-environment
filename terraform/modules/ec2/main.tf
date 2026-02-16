@@ -37,6 +37,15 @@ resource "aws_security_group" "ec2" {
     cidr_blocks = var.ssh_allowed_cidr_blocks
   }
 
+  # Legacy Admin App access (port 5002)
+  ingress {
+    description = "Legacy Admin App HTTP access"
+    from_port   = 5002
+    to_port     = 5002
+    protocol    = "tcp"
+    cidr_blocks = var.ssh_allowed_cidr_blocks
+  }
+
   # Allow all traffic from within VPC (for RDS, Redis, internal communication)
   ingress {
     description = "All traffic from VPC"
