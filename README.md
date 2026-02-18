@@ -77,24 +77,63 @@ Before you begin, ensure you have:
 
 3. **AWS CLI Configured**:
    ```bash
-   # SSO:
+   # Option 1: Standard AWS credentials
+   aws configure
+
+   # Option 2: AWS SSO (recommended)
    aws configure sso
    aws sso login
    ```
 
-4. **GitHub Access**: Clone this repository
+   Verify your credentials work:
+   ```bash
+   aws sts get-caller-identity
+   ```
+
+4. **SSH Key Pair** (Required for EC2 Access):
+
+   Create an SSH key pair in AWS:
+
+   ```bash
+   # Option A: Create via AWS CLI
+   aws ec2 create-key-pair \
+     --key-name datadog-demo-key \
+     --query 'KeyMaterial' \
+     --output text > ~/.ssh/datadog-demo-key.pem
+
+   chmod 400 ~/.ssh/datadog-demo-key.pem
+
+   # Option B: Create via AWS Console
+   # 1. Go to EC2 > Key Pairs > Create Key Pair
+   # 2. Name: datadog-demo-key
+   # 3. Download and save to ~/.ssh/datadog-demo-key.pem
+   # 4. Run: chmod 400 ~/.ssh/datadog-demo-key.pem
+   ```
+
+5. **GitHub Access**: Clone this repository
    ```bash
    git clone <repository-url>
    cd aws-env
    ```
 
-5. **Docker Images**: All images are publicly available (no authentication needed)
+6. **Docker Images**: All images are publicly available (no authentication needed)
    - Images are hosted in a public Docker registry
    - No need to build images locally
 
 ---
 
-### Step-by-Step Deployment
+## Important Notes Before You Start
+
+⚠️ **Resource Naming**: You must use unique names in your Terraform configuration. The default names are already in use. Change these to something unique:
+
+- **`project_name`**: Change from `datadog-demo` to `datadog-demo-yourname` (or similar)
+- **`eks_cluster_name`**: Change from `datadog-demo-cluster` to `datadog-demo-yourname-cluster` (or similar)
+
+These names are used to create AWS resources and must be unique to avoid conflicts.
+
+---
+
+## Step-by-Step Deployment
 
 #### Step 1: Configure Terraform Variables
 
@@ -103,52 +142,99 @@ Before you begin, ensure you have:
    cd terraform
    ```
 
-2. Create your `terraform.tfvars` file:
+2. Create your `terraform.tfvars` file with your configuration:
+
    ```bash
-   # Create tfvars file
    cat > terraform.tfvars << 'EOF'
+   # ============================================
    # AWS Configuration
+   # ============================================
    aws_region = "eu-central-1"  # Change to your preferred region
 
+   # ============================================
+   # Project Information
+   # ============================================
+   # IMPORTANT: Change project_name to something unique!
+   # This is used to name ALL AWS resources (EKS cluster, RDS, etc.)
+   # Example: datadog-demo-yourname, datadog-demo-team1, etc.
+   project_name = "datadog-demo-yourname"  # CHANGE THIS!
+   environment  = "demo"
+
+   # ============================================
    # VPC Configuration
+   # ============================================
    vpc_cidr = "10.0.0.0/16"
+
+   # IMPORTANT: Update availability zones for your region
+   # eu-central-1: ["eu-central-1a", "eu-central-1b"]
+   # us-east-1: ["us-east-1a", "us-east-1b"]
+   # us-west-2: ["us-west-2a", "us-west-2b"]
    availability_zones = ["eu-central-1a", "eu-central-1b"]
 
+   # ============================================
    # EKS Configuration
-   cluster_name = "datadog-demo-cluster"
-   cluster_version = "1.32"
-   node_instance_type = "t3.small"
-   node_desired_size = 2
-   node_min_size = 2
-   node_max_size = 3
+   # ============================================
+   eks_cluster_name        = "datadog-demo-yourname-cluster"  # CHANGE THIS to match your project_name!
+   eks_cluster_version     = "1.32"
+   eks_node_instance_type  = "t3.small"
+   eks_node_desired_size   = 2
+   eks_node_min_size       = 2
+   eks_node_max_size       = 3
 
+   # ============================================
    # EC2 Configuration
-   ec2_instance_types = {
-     vm1 = "t3.small"   # Legacy admin app
-     vm2 = "t3.micro"   # Utility server
+   # ============================================
+   ec2_instances = {
+     vm1 = {
+       name          = "app-server"
+       instance_type = "t3.small"
+       ami_type      = "amazon-linux-2"
+     }
+     vm2 = {
+       name          = "utility-server"
+       instance_type = "t3.micro"
+       ami_type      = "amazon-linux-2"
+     }
    }
 
-   # RDS Configuration
-   db_instance_class = "db.t3.micro"
-   db_name = "ecommerce"
-   db_username = "dbadmin"
-   db_password = "CHANGE-ME-SecurePassword123!"  # Change this!
+   ec2_key_name = "datadog-demo-key"  # Must match the key you created in Prerequisites
 
-   # ElastiCache Configuration
-   redis_node_type = "cache.t3.micro"
-   redis_password = "CHANGE-ME-RedisPassword123!"  # Change this!
+   # ============================================
+   # RDS PostgreSQL Configuration
+   # ============================================
+   rds_instance_class    = "db.t3.micro"
+   rds_database_name     = "ecommerce"
+   rds_master_username   = "dbadmin"
+   rds_master_password   = "ChangeMe123!SecurePassword"  # CHANGE THIS!
 
+   # ============================================
+   # ElastiCache Redis Configuration
+   # ============================================
+   elasticache_node_type = "cache.t3.micro"
+
+   # ============================================
    # Tags
-   project_name = "datadog-demo"
-   environment = "demo"
+   # ============================================
+   tags = {
+     Project     = "datadog-demo"
+     Environment = "demo"
+     ManagedBy   = "terraform"
+   }
    EOF
    ```
 
-3. **Important**: Change the database and Redis passwords!
+3. **IMPORTANT**: Edit the file and update these values:
    ```bash
-   # Edit the file and update passwords
-   nano terraform.tfvars
+   nano terraform.tfvars  # or use your preferred editor
    ```
+
+   **Required changes:**
+   - **`project_name`**: Change to something unique (e.g., `datadog-demo-yourname`) - prevents naming conflicts
+   - **`eks_cluster_name`**: Change to something unique (e.g., `datadog-demo-yourname-cluster`) - must be unique across AWS
+   - `aws_region`: Your preferred AWS region
+   - `availability_zones`: Must match your region (check AWS console)
+   - `rds_master_password`: Use a strong, unique password
+   - `ec2_key_name`: Must match the SSH key you created in Prerequisites
 
 #### Step 2: Initialize and Deploy Infrastructure
 
@@ -185,21 +271,47 @@ Before you begin, ensure you have:
    terraform output > ../infrastructure-outputs.txt
    ```
 
-#### Step 3: Configure kubectl for EKS
-
-1. Update your kubeconfig:
+5. Verify infrastructure was created:
    ```bash
-   aws eks update-kubeconfig --name datadog-demo-cluster --region eu-central-1
+   # Check EKS cluster
+   aws eks describe-cluster --name $(terraform output -raw eks_cluster_name) --query 'cluster.status'
+
+   # Check EC2 instances
+   aws ec2 describe-instances --filters "Name=tag:Project,Values=$(terraform output -raw project_name)" "Name=instance-state-name,Values=running" --query 'Reservations[*].Instances[*].[Tags[?Key==`Name`].Value|[0],PublicIpAddress]' --output table
    ```
 
-   (Change region if you used a different one)
+---
 
-2. Verify EKS connection:
+### Step 3: Configure kubectl for EKS
+
+1. Update your kubeconfig to connect to the EKS cluster:
+   ```bash
+   aws eks update-kubeconfig --name $(terraform output -raw eks_cluster_name) --region $(terraform output -raw aws_region)
+   ```
+
+   You should see: "Added new context arn:aws:eks:..."
+
+2. Verify connectivity to the cluster:
    ```bash
    kubectl get nodes
    ```
 
-   You should see 2 nodes in "Ready" status.
+   You should see 2 nodes in "Ready" status:
+   ```
+   NAME                                          STATUS   ROLES    AGE   VERSION
+   ip-10-0-10-xxx.region.compute.internal       Ready    <none>   5m    v1.32.x
+   ip-10-0-11-xxx.region.compute.internal       Ready    <none>   5m    v1.32.x
+   ```
+
+   If you don't see nodes, wait a few minutes and try again.
+
+3. Check cluster info:
+   ```bash
+   kubectl cluster-info
+   kubectl get namespaces
+   ```
+
+---
 
 #### Step 4: Deploy Kubernetes Applications
 
