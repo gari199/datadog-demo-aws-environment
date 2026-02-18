@@ -92,23 +92,27 @@ Before you begin, ensure you have:
 
 4. **SSH Key Pair** (Required for EC2 Access):
 
-   Create an SSH key pair in AWS:
+   **IMPORTANT**: Use a unique key name to avoid conflicts with existing keys.
+
+   Replace `yourname` with your actual name or identifier:
 
    ```bash
    # Option A: Create via AWS CLI
    aws ec2 create-key-pair \
-     --key-name datadog-demo-key \
+     --key-name datadog-demo-yourname-key \
      --query 'KeyMaterial' \
-     --output text > ~/.ssh/datadog-demo-key.pem
+     --output text > ~/.ssh/datadog-demo-yourname-key.pem
 
-   chmod 400 ~/.ssh/datadog-demo-key.pem
+   chmod 400 ~/.ssh/datadog-demo-yourname-key.pem
 
    # Option B: Create via AWS Console
    # 1. Go to EC2 > Key Pairs > Create Key Pair
-   # 2. Name: datadog-demo-key
-   # 3. Download and save to ~/.ssh/datadog-demo-key.pem
-   # 4. Run: chmod 400 ~/.ssh/datadog-demo-key.pem
+   # 2. Name: datadog-demo-yourname-key (use a unique name!)
+   # 3. Download and save to ~/.ssh/datadog-demo-yourname-key.pem
+   # 4. Run: chmod 400 ~/.ssh/datadog-demo-yourname-key.pem
    ```
+
+   **Note**: Remember your key name - you'll need it in terraform.tfvars!
 
 5. **GitHub Access**: Clone this repository
    ```bash
@@ -124,12 +128,16 @@ Before you begin, ensure you have:
 
 ## Important Notes Before You Start
 
-⚠️ **Resource Naming**: You must use unique names in your Terraform configuration. The default names are already in use. Change these to something unique:
+⚠️ **Resource Naming**: You must use unique names to avoid conflicts with existing resources. Change these to something unique (replace `yourname` with your name or identifier):
 
-- **`project_name`**: Change from `datadog-demo` to `datadog-demo-yourname` (or similar)
-- **`eks_cluster_name`**: Change from `datadog-demo-cluster` to `datadog-demo-yourname-cluster` (or similar)
+- **`project_name`**: Change from `datadog-demo` to `datadog-demo-yourname`
+- **`eks_cluster_name`**: Change from `datadog-demo-cluster` to `datadog-demo-yourname-cluster`
+- **`ec2_key_name`**: Change from `datadog-demo-key` to `datadog-demo-yourname-key`
 
-These names are used to create AWS resources and must be unique to avoid conflicts.
+**Example**: If your name is John, use:
+- `project_name = "datadog-demo-john"`
+- `eks_cluster_name = "datadog-demo-john-cluster"`
+- `ec2_key_name = "datadog-demo-john-key"`
 
 ---
 
@@ -197,7 +205,7 @@ These names are used to create AWS resources and must be unique to avoid conflic
      }
    }
 
-   ec2_key_name = "datadog-demo-key"  # Must match the key you created in Prerequisites
+   ec2_key_name = "datadog-demo-yourname-key"  # CHANGE THIS! Must match the key you created in Prerequisites
 
    # ============================================
    # RDS PostgreSQL Configuration
@@ -229,12 +237,12 @@ These names are used to create AWS resources and must be unique to avoid conflic
    ```
 
    **Required changes:**
-   - **`project_name`**: Change to something unique (e.g., `datadog-demo-yourname`) - prevents naming conflicts
-   - **`eks_cluster_name`**: Change to something unique (e.g., `datadog-demo-yourname-cluster`) - must be unique across AWS
+   - **`project_name`**: Change to something unique (e.g., `datadog-demo-yourname`)
+   - **`eks_cluster_name`**: Change to something unique (e.g., `datadog-demo-yourname-cluster`)
+   - **`ec2_key_name`**: Change to match the unique SSH key you created (e.g., `datadog-demo-yourname-key`)
    - `aws_region`: Your preferred AWS region
    - `availability_zones`: Must match your region (check AWS console)
    - `rds_master_password`: Use a strong, unique password
-   - `ec2_key_name`: Must match the SSH key you created in Prerequisites
 
 #### Step 2: Initialize and Deploy Infrastructure
 
@@ -361,21 +369,18 @@ These names are used to create AWS resources and must be unique to avoid conflic
 
 #### Step 5: Deploy Legacy Admin App to EC2
 
-1. Get VM1 public IP:
+1. Get VM1 public IP and SSH to it:
    ```bash
    cd terraform
-   terraform output -raw ec2_public_ips
+   VM1_IP=$(terraform output -json ec2_public_ips | jq -r '.vm1')
+
+   # SSH using your unique key (replace yourname with your actual key name)
+   ssh -i ~/.ssh/datadog-demo-yourname-key.pem ec2-user@$VM1_IP
    ```
 
-2. SSH to VM1:
-   ```bash
-   # Replace with your actual IP
-   ssh -i ~/.ssh/datadog-demo-key.pem ec2-user@<VM1_PUBLIC_IP>
-   ```
+   **Note**: Replace `datadog-demo-yourname-key.pem` with your actual SSH key file name.
 
-   **Note**: If you don't have the SSH key, you'll need to access via AWS Systems Manager Session Manager or generate a new key.
-
-3. On the EC2 instance, install dependencies:
+2. On the EC2 instance, install dependencies:
    ```bash
    # Update system
    sudo yum update -y
@@ -391,44 +396,27 @@ These names are used to create AWS resources and must be unique to avoid conflic
    pip3 install -r requirements.txt
    ```
 
-4. Create environment file:
+3. Create `.env` file (replace with your values):
    ```bash
-   cat > .env << EOF
+   cat > .env << 'EOF'
    DB_HOST=<your-rds-endpoint>
    DB_PORT=5432
    DB_NAME=ecommerce
    DB_USER=dbadmin
-   DB_PASSWORD=CHANGE-ME-SecurePassword123!
+   DB_PASSWORD=<your-db-password>
+   PORT=5002
    EOF
    ```
 
-5. Create systemd service:
+4. Start the app:
    ```bash
-   sudo cat > /etc/systemd/system/legacy-admin.service << EOF
-   [Unit]
-   Description=Legacy Admin Application
-   After=network.target
-
-   [Service]
-   Type=simple
-   User=ec2-user
-   WorkingDirectory=/home/ec2-user/aws-env/applications/legacy-admin
-   Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-   EnvironmentFile=/home/ec2-user/aws-env/applications/legacy-admin/.env
-   ExecStart=/usr/bin/python3 app.py
-   Restart=always
-
-   [Install]
-   WantedBy=multi-user.target
-   EOF
+   nohup python3 app.py > app.log 2>&1 &
+   exit
    ```
 
-6. Start the service:
+5. Test from your local machine:
    ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable legacy-admin
-   sudo systemctl start legacy-admin
-   sudo systemctl status legacy-admin
+   curl http://$VM1_IP:5002/health
    ```
 
 #### Step 6: Verify Deployment
@@ -701,17 +689,15 @@ psql -h <rds-endpoint> -U dbadmin -d ecommerce
 ### EC2 Operations
 
 ```bash
-# SSH to VM1 (legacy admin)
-ssh -i ~/.ssh/datadog-demo-key.pem ec2-user@<VM1_PUBLIC_IP>
+# SSH to VM1 (replace yourname with your key name)
+cd terraform
+ssh -i ~/.ssh/datadog-demo-yourname-key.pem ec2-user@$(terraform output -json ec2_public_ips | jq -r '.vm1')
 
-# Check legacy admin service status
-sudo systemctl status legacy-admin
+# View logs
+tail -f ~/aws-env/applications/legacy-admin/app.log
 
-# View legacy admin logs
-sudo journalctl -u legacy-admin -f
-
-# Restart legacy admin
-sudo systemctl restart legacy-admin
+# Restart app
+pkill -f app.py && cd ~/aws-env/applications/legacy-admin && nohup python3 app.py > app.log 2>&1 &
 ```
 
 ---
