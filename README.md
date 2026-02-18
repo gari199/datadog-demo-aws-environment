@@ -140,6 +140,17 @@ All Docker images are **publicly available** - no authentication needed.
 
 ---
 
+## Important Notes Before You Start
+
+⚠️ **Resource Naming**: You must use unique names in your Terraform configuration. The default names are already in use. Change these to something unique:
+
+- **`project_name`**: Change from `datadog-demo` to `datadog-demo-yourname` (or similar)
+- **`eks_cluster_name`**: Change from `datadog-demo-cluster` to `datadog-demo-yourname-cluster` (or similar)
+
+These names are used to create AWS resources and must be unique to avoid conflicts.
+
+---
+
 ## Step-by-Step Deployment
 
 ### Step 1: Configure Terraform Variables
@@ -161,7 +172,10 @@ All Docker images are **publicly available** - no authentication needed.
    # ============================================
    # Project Information
    # ============================================
-   project_name = "datadog-demo"
+   # IMPORTANT: Change project_name to something unique!
+   # This is used to name ALL AWS resources (EKS cluster, RDS, etc.)
+   # Example: datadog-demo-yourname, datadog-demo-team1, etc.
+   project_name = "datadog-demo-yourname"  # CHANGE THIS!
    environment  = "demo"
 
    # ============================================
@@ -178,7 +192,7 @@ All Docker images are **publicly available** - no authentication needed.
    # ============================================
    # EKS Configuration
    # ============================================
-   eks_cluster_name        = "datadog-demo-cluster"
+   eks_cluster_name        = "datadog-demo-yourname-cluster"  # CHANGE THIS to match your project_name!
    eks_cluster_version     = "1.32"
    eks_node_instance_type  = "t3.small"
    eks_node_desired_size   = 2
@@ -233,6 +247,8 @@ All Docker images are **publicly available** - no authentication needed.
    ```
 
    **Required changes:**
+   - **`project_name`**: Change to something unique (e.g., `datadog-demo-yourname`) - prevents naming conflicts
+   - **`eks_cluster_name`**: Change to something unique (e.g., `datadog-demo-yourname-cluster`) - must be unique across AWS
    - `aws_region`: Your preferred AWS region
    - `availability_zones`: Must match your region (check AWS console)
    - `rds_master_password`: Use a strong, unique password
@@ -293,14 +309,11 @@ All Docker images are **publicly available** - no authentication needed.
 
 5. Verify infrastructure was created:
    ```bash
-   # Check VPC
-   aws ec2 describe-vpcs --filters "Name=tag:Project,Values=datadog-demo" --query 'Vpcs[0].VpcId'
-
    # Check EKS cluster
-   aws eks describe-cluster --name datadog-demo-cluster --query 'cluster.status'
+   aws eks describe-cluster --name $(terraform output -raw eks_cluster_name) --query 'cluster.status'
 
    # Check EC2 instances
-   aws ec2 describe-instances --filters "Name=tag:Project,Values=datadog-demo" "Name=instance-state-name,Values=running" --query 'Reservations[*].Instances[*].[Tags[?Key==`Name`].Value|[0],PublicIpAddress]' --output table
+   aws ec2 describe-instances --filters "Name=tag:Project,Values=$(terraform output -raw project_name)" "Name=instance-state-name,Values=running" --query 'Reservations[*].Instances[*].[Tags[?Key==`Name`].Value|[0],PublicIpAddress]' --output table
    ```
 
 ---
@@ -309,7 +322,7 @@ All Docker images are **publicly available** - no authentication needed.
 
 1. Update your kubeconfig to connect to the EKS cluster:
    ```bash
-   aws eks update-kubeconfig --name datadog-demo-cluster --region $(terraform output -raw aws_region)
+   aws eks update-kubeconfig --name $(terraform output -raw eks_cluster_name) --region $(terraform output -raw aws_region)
    ```
 
    You should see: "Added new context arn:aws:eks:..."
@@ -738,28 +751,21 @@ kubectl get events -n datadog-demo --sort-by='.lastTimestamp'
 #### Nodes Not Appearing
 ```bash
 # Check node group status
+cd terraform
 aws eks describe-nodegroup \
-  --cluster-name datadog-demo-cluster \
+  --cluster-name $(terraform output -raw eks_cluster_name) \
   --nodegroup-name <nodegroup-name> \
   --query 'nodegroup.status'
-
-# Check node group health issues
-aws eks describe-nodegroup \
-  --cluster-name datadog-demo-cluster \
-  --nodegroup-name <nodegroup-name> \
-  --query 'nodegroup.health'
-
-# Verify IAM roles
-aws iam list-attached-role-policies --role-name <node-role-name>
 ```
 
 #### Cannot Connect to Cluster
 ```bash
 # Re-configure kubectl
-aws eks update-kubeconfig --name datadog-demo-cluster --region <your-region>
+cd terraform
+aws eks update-kubeconfig --name $(terraform output -raw eks_cluster_name) --region $(terraform output -raw aws_region)
 
 # Check cluster is active
-aws eks describe-cluster --name datadog-demo-cluster --query 'cluster.status'
+aws eks describe-cluster --name $(terraform output -raw eks_cluster_name) --query 'cluster.status'
 
 # Verify AWS credentials
 aws sts get-caller-identity
@@ -818,8 +824,9 @@ docker pull <image-name>
 #### Cannot Connect to RDS from Pods
 ```bash
 # 1. Check RDS is running
+cd terraform
 aws rds describe-db-instances \
-  --db-instance-identifier datadog-demo-postgres \
+  --db-instance-identifier $(terraform output -raw project_name)-postgres \
   --query 'DBInstances[0].DBInstanceStatus'
 
 # 2. Check security group allows connections from EKS
@@ -1059,9 +1066,10 @@ terraform apply
 ```bash
 # RDS automatic backups are enabled (7-day retention)
 # Manual snapshot:
+cd terraform
 aws rds create-db-snapshot \
-  --db-instance-identifier datadog-demo-postgres \
-  --db-snapshot-identifier datadog-demo-manual-backup-$(date +%Y%m%d)
+  --db-instance-identifier $(terraform output -raw project_name)-postgres \
+  --db-snapshot-identifier $(terraform output -raw project_name)-backup-$(date +%Y%m%d)
 
 # Export Terraform state
 cd terraform
@@ -1113,13 +1121,15 @@ Type `yes` when prompted. This will delete:
 ### Step 4: Clean Up AWS Resources Not Managed by Terraform
 
 ```bash
-# Delete SSH key pair
-aws ec2 delete-key-pair --key-name datadog-demo-key
-rm ~/.ssh/datadog-demo-key.pem
+cd terraform
+
+# Delete SSH key pair (if you want to remove it)
+aws ec2 delete-key-pair --key-name $(grep ec2_key_name terraform.tfvars | cut -d'"' -f2)
+rm ~/.ssh/*.pem  # Or delete your specific key file
 
 # Check for any orphaned resources
-aws ec2 describe-vpcs --filters "Name=tag:Project,Values=datadog-demo"
-aws eks list-clusters --query 'clusters[?contains(@, `datadog-demo`)]'
+aws ec2 describe-vpcs --filters "Name=tag:Project,Values=$(terraform output -raw project_name)"
+aws eks list-clusters | grep $(terraform output -raw project_name)
 ```
 
 ### Cost After Deletion
