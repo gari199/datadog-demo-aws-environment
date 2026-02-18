@@ -463,370 +463,90 @@ All Docker images are **publicly available** - no authentication needed.
 
 ### Step 5: Deploy Legacy Admin App to EC2
 
-The legacy admin application runs directly on EC2 (VM1) to demonstrate monitoring of traditional infrastructure alongside containerized apps.
-
-1. Get VM1 public IP:
+1. Get VM1 public IP and SSH:
    ```bash
    cd terraform
    VM1_IP=$(terraform output -json ec2_public_ips | jq -r '.vm1')
-   echo "VM1 Public IP: $VM1_IP"
-   cd ..
-   ```
-
-2. SSH to VM1:
-   ```bash
    ssh -i ~/.ssh/datadog-demo-key.pem ec2-user@$VM1_IP
    ```
 
-   If you get a "Host key verification" prompt, type `yes`.
-
-   **Troubleshooting SSH issues:**
-   - Permission denied: Check `chmod 400 ~/.ssh/datadog-demo-key.pem`
-   - Connection timeout: Check security group allows SSH from your IP
-   - Wrong key: Verify `ec2_key_name` in terraform.tfvars matches your key
-
-3. Once connected to VM1, install dependencies:
+2. Install dependencies:
    ```bash
-   # Update system packages
    sudo yum update -y
-
-   # Install Python 3 and required tools
-   sudo yum install -y python3 python3-pip git postgresql15
-
-   # Verify installations
-   python3 --version
-   pip3 --version
+   sudo yum install -y python3 python3-pip git
    ```
 
-4. Clone the repository on EC2:
+3. Clone repository and install Python packages:
    ```bash
-   cd ~
    git clone <repository-url> aws-env
    cd aws-env/applications/legacy-admin
-   ```
-
-   **Alternative**: If repository is private, you can use `scp` to copy files:
-   ```bash
-   # From your local machine (new terminal):
-   scp -i ~/.ssh/datadog-demo-key.pem -r applications/legacy-admin ec2-user@$VM1_IP:~/
-   ```
-
-5. Install Python dependencies:
-   ```bash
-   cd ~/aws-env/applications/legacy-admin
    pip3 install --user -r requirements.txt
    ```
 
-6. Create environment configuration file:
-   ```bash
-   # Get DB endpoint from Terraform (from your local machine)
-   cd terraform
-   DB_ENDPOINT=$(terraform output -raw rds_address)
-   echo "DB Endpoint: $DB_ENDPOINT"
-   ```
-
-   Then back on EC2:
+4. Create `.env` file (replace with your values):
    ```bash
    cat > .env << 'EOF'
-   DB_HOST=<paste-db-endpoint-here>
+   DB_HOST=<your-rds-endpoint>
    DB_PORT=5432
    DB_NAME=ecommerce
    DB_USER=dbadmin
-   DB_PASSWORD=ChangeMe123!SecurePassword
+   DB_PASSWORD=<your-db-password>
    PORT=5002
    EOF
    ```
 
-   **IMPORTANT**: Replace values:
-   - `<paste-db-endpoint-here>`: Your RDS endpoint
-   - `ChangeMe123!SecurePassword`: Your actual database password
-
-   Verify the file:
+5. Start the app:
    ```bash
-   cat .env
+   nohup python3 app.py > app.log 2>&1 &
+   exit
    ```
 
-7. Test the application manually first:
+6. Test from your local machine:
    ```bash
-   python3 app.py
+   curl http://$VM1_IP:5002/health
    ```
-
-   You should see:
-   ```
-   * Running on http://0.0.0.0:5002
-   ```
-
-   Press `Ctrl+C` to stop it. If it works, proceed to create a service.
-
-8. Create systemd service for automatic startup:
-   ```bash
-   sudo tee /etc/systemd/system/legacy-admin.service > /dev/null << EOF
-   [Unit]
-   Description=Legacy Admin Application
-   After=network.target
-
-   [Service]
-   Type=simple
-   User=ec2-user
-   WorkingDirectory=/home/ec2-user/aws-env/applications/legacy-admin
-   Environment="PATH=/usr/local/bin:/usr/bin:/bin:/home/ec2-user/.local/bin"
-   EnvironmentFile=/home/ec2-user/aws-env/applications/legacy-admin/.env
-   ExecStart=/usr/bin/python3 app.py
-   Restart=always
-   RestartSec=10
-
-   [Install]
-   WantedBy=multi-user.target
-   EOF
-   ```
-
-9. Start and enable the service:
-   ```bash
-   # Reload systemd
-   sudo systemctl daemon-reload
-
-   # Enable service to start on boot
-   sudo systemctl enable legacy-admin
-
-   # Start the service
-   sudo systemctl start legacy-admin
-
-   # Check status
-   sudo systemctl status legacy-admin
-   ```
-
-   You should see "active (running)" in green.
-
-10. View logs to verify it's working:
-    ```bash
-    sudo journalctl -u legacy-admin -f
-    ```
-
-    Press `Ctrl+C` to exit.
-
-11. Test the admin app from your local machine:
-    ```bash
-    curl http://$VM1_IP:5002/health
-    ```
-
-    You should get a JSON response with service status.
-
-12. Exit from EC2:
-    ```bash
-    exit
-    ```
 
 ---
 
-### Step 6: Verify Complete Deployment
+### Step 6: Verify Deployment
 
-Run these verification steps from your local machine:
-
-#### 1. Check Kubernetes Pods
 ```bash
+# Check all pods are running
 kubectl get pods -n datadog-demo
-```
 
-All pods should show `1/1 Running`.
+# Check services
+kubectl get svc -n datadog-demo
 
-#### 2. Test Pod Health Endpoints
-```bash
-# Test frontend
-kubectl exec -n datadog-demo deployment/frontend -- curl -s http://localhost:8080/health
-
-# Test API gateway
-kubectl exec -n datadog-demo deployment/api-gateway -- curl -s http://localhost:3000/health
-
-# Test order service
-kubectl exec -n datadog-demo deployment/order-service -- curl -s http://localhost:5000/health
-
-# Test payment service
-kubectl exec -n datadog-demo deployment/payment-service -- curl -s http://localhost:5001/health
-```
-
-All should return JSON with `"status": "healthy"`.
-
-#### 3. Test Service Communication
-```bash
-# Test that frontend can reach API gateway
-kubectl exec -n datadog-demo deployment/frontend -- curl -s http://api-gateway/api/products
-
-# Test that API gateway can reach order service
-kubectl exec -n datadog-demo deployment/api-gateway -- curl -s http://order-service/health
-```
-
-#### 4. Check Database Connectivity
-```bash
-# From a pod, test database connection
-kubectl run postgres-test -n datadog-demo --rm -it --image=postgres:16 --restart=Never -- \
-  psql -h $(cd terraform && terraform output -raw rds_address) -U dbadmin -d ecommerce -c "\dt"
-```
-
-Enter the database password when prompted. You should see database tables (or "No relations found" if tables haven't been created yet).
-
-#### 5. Check Legacy Admin App
-```bash
-# Get VM1 IP
+# Test legacy admin
 cd terraform
-VM1_IP=$(terraform output -json ec2_public_ips | jq -r '.vm1')
-
-# Test health endpoint
-curl http://$VM1_IP:5002/health
-
-# Check if it can connect to database
-curl http://$VM1_IP:5002/
-```
-
-#### 6. View All Infrastructure Status
-```bash
-# Kubernetes resources
-kubectl get all -n datadog-demo
-
-# Terraform outputs
-cd terraform
-terraform output
-
-# AWS resources
-aws eks describe-cluster --name datadog-demo-cluster --query 'cluster.status'
-aws rds describe-db-instances --db-instance-identifier datadog-demo-postgres --query 'DBInstances[0].DBInstanceStatus'
+curl http://$(terraform output -json ec2_public_ips | jq -r '.vm1'):5002/health
 ```
 
 ---
 
 ### Step 7: Access the Applications
 
-#### Option A: Port Forwarding (Recommended for Testing)
-
-1. **Access Frontend (E-Commerce Store):**
-   ```bash
-   # Start port forwarding (runs in foreground)
-   kubectl port-forward -n datadog-demo svc/frontend 8080:80
-   ```
-
-   Keep this terminal open. Open your browser:
-   - **URL**: http://localhost:8080
-
-   You should see the e-commerce store with products.
-
-   To run in background:
-   ```bash
-   kubectl port-forward -n datadog-demo svc/frontend 8080:80 > /dev/null 2>&1 &
-   ```
-
-2. **Access API Gateway (Optional):**
-   ```bash
-   # In a new terminal
-   kubectl port-forward -n datadog-demo svc/api-gateway 3000:80
-   ```
-
-   Test API endpoints:
-   ```bash
-   curl http://localhost:3000/api/products
-   curl http://localhost:3000/health
-   ```
-
-3. **Access Legacy Admin Console:**
-
-   No port forwarding needed - it's directly accessible:
-   ```bash
-   # Get VM1 IP
-   cd terraform
-   VM1_IP=$(terraform output -json ec2_public_ips | jq -r '.vm1')
-   echo "Admin Console: http://$VM1_IP:5002"
-   ```
-
-   Open in browser: **http://<VM1_IP>:5002**
-
-   You should see the admin dashboard showing orders and statistics.
-
-#### Option B: Expose via LoadBalancer (Production Setup)
-
-To expose services publicly without port forwarding:
-
+**Frontend (port-forward):**
 ```bash
-# Change frontend service to LoadBalancer type
-kubectl patch svc frontend -n datadog-demo -p '{"spec":{"type":"LoadBalancer"}}'
-
-# Wait for LoadBalancer to be provisioned (2-3 minutes)
-kubectl get svc frontend -n datadog-demo -w
-
-# Get the LoadBalancer URL
-FRONTEND_URL=$(kubectl get svc frontend -n datadog-demo -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-echo "Frontend URL: http://$FRONTEND_URL"
+kubectl port-forward -n datadog-demo svc/frontend 8080:80
 ```
+Open http://localhost:8080
 
-**Note**: LoadBalancer will incur additional AWS costs (~$16/month).
+**Legacy Admin Console:**
+```bash
+cd terraform
+echo "http://$(terraform output -json ec2_public_ips | jq -r '.vm1'):5002"
+```
+Open the URL in your browser.
 
 ---
 
 ## Testing the Application
 
-### Test Complete E-Commerce Flow
-
-1. **Open Frontend**: http://localhost:8080 (or LoadBalancer URL)
-
-2. **Browse Products**: You should see a grid of products
-
-3. **Add to Cart**: Click "Add to Cart" on any product
-
-4. **View Cart**: Click "Cart" button in header
-
-5. **Checkout**: Click "Proceed to Checkout"
-   - This creates orders in the database
-   - Processes payments through the payment service
-   - You should see "Order placed successfully!"
-
-6. **View in Admin Console**: Open http://<VM1_IP>:5002
-   - You should see your orders appear
-   - Statistics should update
-   - Shows orders by status
-
-### Generate Test Traffic
-
-Create a script to generate realistic traffic:
-
-```bash
-cat > test-traffic.sh << 'EOF'
-#!/bin/bash
-
-FRONTEND_URL="http://localhost:8080"
-echo "Generating test traffic to $FRONTEND_URL"
-echo "Make sure port-forward is running!"
-echo ""
-
-for i in {1..20}; do
-  echo "[$i/20] Simulating user session..."
-
-  # Browse products
-  curl -s "$FRONTEND_URL/api/products" > /dev/null
-
-  # Create an order
-  ORDER_DATA=$(cat <<JSON
-{
-  "user_id": 1,
-  "product_name": "Test Product $i",
-  "quantity": $((RANDOM % 5 + 1)),
-  "price": $((RANDOM % 100 + 10)).99
-}
-JSON
-)
-
-  curl -s -X POST "$FRONTEND_URL/api/orders" \
-    -H "Content-Type: application/json" \
-    -d "$ORDER_DATA" > /dev/null
-
-  # Random delay between requests
-  sleep $((RANDOM % 5 + 2))
-done
-
-echo ""
-echo "✓ Test traffic generation complete!"
-echo "Check admin console: http://<VM1_IP>:5002"
-EOF
-
-chmod +x test-traffic.sh
-./test-traffic.sh
-```
+1. Open http://localhost:8080 (make sure port-forward is running)
+2. Browse products and add to cart
+3. Proceed to checkout
+4. Check admin console to see orders appear
 
 ---
 
@@ -985,40 +705,28 @@ kubectl run psql-client -n datadog-demo --rm -it --image=postgres:16 --restart=N
 ### EC2 Operations
 
 ```bash
-# SSH to VM1 (legacy admin)
+# SSH to VM1
 cd terraform
 ssh -i ~/.ssh/datadog-demo-key.pem ec2-user@$(terraform output -json ec2_public_ips | jq -r '.vm1')
 
-# Check legacy admin service status
-ssh -i ~/.ssh/datadog-demo-key.pem ec2-user@<VM1_IP> 'sudo systemctl status legacy-admin'
+# View logs
+tail -f ~/aws-env/applications/legacy-admin/app.log
 
-# View legacy admin logs remotely
-ssh -i ~/.ssh/datadog-demo-key.pem ec2-user@<VM1_IP> 'sudo journalctl -u legacy-admin -f'
-
-# Restart legacy admin service
-ssh -i ~/.ssh/datadog-demo-key.pem ec2-user@<VM1_IP> 'sudo systemctl restart legacy-admin'
+# Restart app
+pkill -f app.py && cd ~/aws-env/applications/legacy-admin && nohup python3 app.py > app.log 2>&1 &
 ```
 
 ### Monitoring & Debugging
 
 ```bash
-# Check pod resource usage
-kubectl top pods -n datadog-demo
+# View pod logs
+kubectl logs -n datadog-demo <pod-name>
 
-# Check node resource usage
-kubectl top nodes
+# Check pod status
+kubectl describe pod <pod-name> -n datadog-demo
 
-# Describe a failing pod
-kubectl describe pod <pod-name> -n datadog-demo | grep -A 10 Events
-
-# Get pod logs for crashes
-kubectl logs <pod-name> -n datadog-demo --previous
-
-# Check service endpoints
-kubectl get endpoints -n datadog-demo
-
-# Test internal DNS resolution
-kubectl run test-dns -n datadog-demo --rm -it --image=busybox --restart=Never -- nslookup api-gateway
+# Check events
+kubectl get events -n datadog-demo --sort-by='.lastTimestamp'
 ```
 
 ---
@@ -1187,11 +895,11 @@ aws ssm start-session --target <instance-id>
 # SSH to EC2 and check logs
 ssh -i ~/.ssh/datadog-demo-key.pem ec2-user@<VM1_IP>
 
-# Check service status
-sudo systemctl status legacy-admin
+# Check if process is running
+ps aux | grep app.py
 
-# View full logs
-sudo journalctl -u legacy-admin -n 100 --no-pager
+# View application logs
+tail -50 ~/aws-env/applications/legacy-admin/app.log
 
 # Check if port 5002 is listening
 sudo netstat -tlnp | grep 5002
@@ -1206,8 +914,10 @@ cat ~/aws-env/applications/legacy-admin/.env
 # 3. Database connection fails
 psql -h <db-host> -U dbadmin -d ecommerce
 
-# Restart service
-sudo systemctl restart legacy-admin
+# Restart the app
+pkill -f app.py
+cd ~/aws-env/applications/legacy-admin
+nohup python3 app.py > app.log 2>&1 &
 ```
 
 #### Legacy Admin Cannot Connect to Database
