@@ -1,7 +1,14 @@
 from flask import Flask, render_template, jsonify
 import psycopg2
 import os
+import logging
 from datetime import datetime
+
+logging.basicConfig(
+    level=logging.ERROR,
+    format='%(asctime)s %(levelname)s %(name)s: %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -24,7 +31,7 @@ def get_db_connection():
         )
         return conn
     except Exception as e:
-        print(f"Database connection error: {e}")
+        logger.error(f"Database connection error: {e}")
         return None
 
 @app.route('/')
@@ -80,7 +87,7 @@ def get_orders():
         })
 
     except Exception as e:
-        print(f"Error fetching orders: {e}")
+        logger.error(f"Error fetching orders: {e}")
         if conn:
             conn.close()
         return jsonify({'error': str(e)}), 500
@@ -130,10 +137,15 @@ def get_stats():
         })
 
     except Exception as e:
-        print(f"Error fetching stats: {e}")
+        logger.error(f"Error fetching stats: {e}")
         if conn:
             conn.close()
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/error-test')
+def error_test():
+    """Test endpoint to generate error logs for Datadog testing"""
+    raise Exception("Simulated error for Datadog testing")
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5002))
